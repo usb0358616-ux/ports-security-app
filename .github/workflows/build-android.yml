@@ -1,0 +1,61 @@
+name: Build Android APK from uploaded ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Extract source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="$(find . -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo 'No source ZIP found in repository root.'
+            exit 1
+          fi
+          mkdir -p _buildsrc
+          unzip -q "$ZIP_FILE" -d _buildsrc
+          PROJECT_DIR="$(find _buildsrc -type f -name package.json -not -path '*/node_modules/*' -print -quit | xargs -r dirname)"
+          if [ -z "$PROJECT_DIR" ]; then
+            echo 'package.json not found inside uploaded ZIP.'
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+      - name: Install dependencies and prepare Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          npm ci
+          npm run build
+          npx cap sync android
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR/android"
+          chmod +x gradlew
+          ./gradlew assembleDebug
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/output/ports-security-debug.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ports-security-debug-apk
+          path: output/ports-security-debug.apk
+          if-no-files-found: error
